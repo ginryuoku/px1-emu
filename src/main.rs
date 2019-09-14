@@ -1,9 +1,9 @@
 // const declares
 const NUM_X: usize = 32;
 
-const MAX_RAM_SIZE: usize = 16 * 1024 * 1024;
-const RAM_START: usize = 0x0;
-const RAM_END: usize = 0xFEFFFF;
+const MAX_RAM_SIZE: usize = 256 * 1024 * 1024;
+const RAM_START: usize = 0x8000_0000;
+const RAM_END: usize = RAM_START + MAX_RAM_SIZE - 1;
 
 const MAX_ROM_SIZE: usize = 1024 * 1024;
 const ROM_START: usize = 0xFFFF_FFFF_FFF0_0000;
@@ -40,7 +40,9 @@ const MBADADDR: usize = 0x343;
 
 // use declares
 extern crate clap;
+extern crate goblin;
 use clap::{Arg, App};
+use goblin::{Object};
 use std::io::Read;
 
 enum InstFormat {
@@ -101,6 +103,10 @@ enum Instruction {
     ANDI(u8, u8, i32),
     ORI(u8, u8, i32),
     CSRRS(u8, u8, u16),
+
+    C_ADDI(u8, i32),
+    C_LUI(u8, i32),
+
     EBREAK,
     NOP,
 }
@@ -114,11 +120,54 @@ impl Instruction {
             Some(Instruction::NOP)
         } else {
             if opcode_c != 0b11 {
-                //println!("RVC Opcode: {:#x} ({:#b})", opcode_c, opcode_c);
+                println!("RVC Opcode: {:#x} ({:#b})", opcode_c, opcode_c);
                 match opcode_c {
-                    0 => None,
-                    1 => None,
-                    2 => None,
+                    0 => {
+                        match Self::get_rvc_funct3(word) {
+                            0 => panic!("Unimplemented RVC Op: C.ADDI4SPN"),
+                            1 => panic!("Unimplemented RVC Op: C.FLD"),
+                            2 => panic!("Unimplemented RVC Op: C.LW"),
+                            3 => panic!("Unimplemented RVC Op: C.LD"),
+                            4 => panic!("Illegal RVC-Op: Reserved"),
+                            5 => panic!("Unimplemented RVC Op: C.FSD"),
+                            6 => panic!("Unimplemented RVC Op: C.SW"),
+                            7 => panic!("Unimplemented RVC Op: C.SD"),
+                            _ => None,
+                        }
+                    },
+                    1 => {
+                        match Self::get_rvc_funct3(word) {
+                            0 => Some(Instruction::C_ADDI(Self::get_rvc_rs1rd(word), Self::get_rvc_nzimm(word))),
+                            1 => panic!("Unimplemented RVC Op: C.ADDIW"),
+                            2 => panic!("Unimplemented RVC Op: C.LI"),
+                            3 => {
+                                let rd = Self::get_rvc_rs1rd(word);
+                                if rd == 2 {
+                                    panic!("Unimplemented RVC Op: C.ADDI16SP")
+                                } else {
+                                    Some(Instruction::C_LUI(rd, Self::get_rvc_nzimm(word)))
+                                }
+                            },
+                            4 => panic!("Unimplemented RVC Op: Compressed bitwise instructions (01/100)"),
+                            5 => panic!("Unimplemented RVC Op: C.J"),
+                            6 => panic!("Unimplemented RVC Op: C.BEQZ"),
+                            7 => panic!("Unimplemented RVC Op: C.BNEZ"),                            
+                            _ => None,
+                        }
+                    },
+                    2 => {
+                        match Self::get_rvc_funct3(word) {
+                            0 => panic!("Unimplemented RVC Op: C.SLLI64"),
+                            1 => panic!("Unimplemented RVC Op: C.FLDSP"),
+                            2 => panic!("Unimplemented RVC Op: C.LWSP"),
+                            3 => panic!("Unimplemented RVC Op: C.LDSP"),
+                            4 => panic!("Unimplemented RVC Op: (01/100) Jump Instructions"),
+                            5 => panic!("Unimplemented RVC Op: C.FSDSP"),
+                            6 => panic!("Unimplemented RVC Op: C.SWSP"),
+                            7 => panic!("Unimplemented RVC Op: C.SDSP"),
+                            _ => None,
+                        }
+                    },
                     _ => None
                 }
             } else {
@@ -157,6 +206,14 @@ impl Instruction {
                     }
                     0x33 => {
                         match Self::get_funct3(word) {
+                            0 => {
+                                match Self::get_funct7(word) {
+                                    0 => panic!("Unimplemented opcode: ADD"),
+                                    1 => panic!("Unimplemented opcode: MUL"),
+                                    0x20 => panic!("Unimplemented opcode: SUB"),
+                                    _ => None
+                                }
+                            }
                             6 => Some(Instruction::OR(Self::get_rs1(word), Self::get_rs2(word), Self::get_rd(word))),
                             _ => None
                         }
@@ -203,6 +260,42 @@ impl Instruction {
         (word & 0b11) as u8
     }
 
+    fn get_rvc_funct3(word: u32) -> u8 {
+        ((word >> 13) & 0b111) as u8
+    }
+
+    fn get_rvc_rs1rd(word: u32) -> u8 {
+        ((word >> 7) & 0b11111 ) as u8
+    }
+
+    fn get_rvc_nzimm(word: u32) -> i32 {
+        // C.LUI: displace bits 2-6 and bit 12 and combine at bit 12
+        // C.ADDI16SP: what the *fuck*
+        // C.ADDI: return basic immediate
+        let funct3 = Self::get_rvc_funct3(word);
+        let rd = Self::get_rvc_rs1rd(word);
+        if funct3 == 3 {
+            if rd == 2 {
+                let mut result = (((word >> 6) & 0b1) << 4 | ((word >> 2) & 0b1) << 5 | ((word >> 5) & 0b1) << 6 | ((word >> 3) & 0b11) << 7 | ((word >> 12) & 0b1) << 9) as i32;
+                
+                result |= -(result & 0x200);
+                result
+            } else {
+                let mut result = (((word >> 2) & 0b11111) << 12 | ((word >> 12) & 0b1) << 17) as i32;
+
+                result |= -(result & 0x20000);
+                result
+            }
+        } else if funct3 == 0 {
+            let mut result = (((word >> 2) & 0b11111) | ((word >> 12) & 0b1) << 5) as i32;
+
+            result |= -(result & 0x20);
+            result
+        } else {
+            panic!("get_rvc_nzimm(): WHY ARE WE HERE")
+        }
+    }
+
     fn get_rd(word: u32) -> u8 {
         ((word >> 7) & 0b11111) as u8
     }
@@ -216,12 +309,13 @@ impl Instruction {
     }
 
     fn get_funct3(word: u32) -> u8 {
-        //println!("get_funct3: {:x}", ((word >> 12) & 0b111));
+        println!("get_funct3: {:x}", ((word >> 12) & 0b111));
         ((word >> 12) & 0b111) as u8
     }
 
     fn get_funct7(word: u32) -> u8 {
-        (word >> 24) as u8
+        println!("get_funct7: {:x}", (word >> 25) as u8);
+        (word >> 25) as u8
     }
 
     fn get_funct12(word: u32) -> u16 {
@@ -229,9 +323,9 @@ impl Instruction {
     }
 
     fn get_b_imm(word: u32) -> i32 {
-        let mut disp12 = (((word >> 7) & 0x001E) |((word << 4) & 0x0800) |((word >> 20) & 0x07E0) | ((word >> 19) & 0x1000)) as i32;
+        let mut disp12 = (((word >> 7) & 0x1E) |((word << 4) & 0x800) |((word >> 20) & 0x7E0) | ((word >> 19) & 0x1000)) as i32;
 
-	    disp12 |= -(disp12 & 0x00001000);
+	    disp12 |= -(disp12 & 0x1000);
         disp12
     }
 
@@ -240,8 +334,8 @@ impl Instruction {
     }
 
     fn get_j_imm(word: u32) -> i32 {
-        let mut disp20: u32 = ((word & 0x7FE00000) >> 20) | ((word & 0x00100000) >> 9) | (word & 0x000FF000) | ((word & 0x80000000) >> 11);
-        if disp20 & 0x00100000 == 0x00100000 {
+        let mut disp20: u32 = ((word & 0x7FE00000) >> 20) | ((word & 0x100000) >> 9) | (word & 0xFF000) | ((word & 0x80000000) >> 11);
+        if disp20 & 0x100000 == 0x100000 {
             disp20 |= 0xFFF00000;
         }
 
@@ -277,16 +371,6 @@ impl CSR {
     }
     fn write_csr(&mut self, csr_num: usize, value: u64) {
         match csr_num {
-            MSTATUS => {
-                self.csr[csr_num] = (value & 0x0000000000000088) | 0x0000000000001800
-            },
-            MTVEC => {
-                self.csr[csr_num] = value & 0xFFFFFFFFFFFFFFFC
-            },
-            MCAUSE => {
-                self.csr[csr_num] = value & 0x800000000000000F
-            },
-            0xF14 => {},
             _ => {self.csr[csr_num] = value},
         }
     }
@@ -378,8 +462,8 @@ impl CPU {
     }
 
     fn reset(&mut self) {
-        self.pc = (-0x100 as i64) as u64;
-        self.csr.write_csr(MTVEC,  (-0x200 as i64) as u64);
+        self.pc = 0x8000_0000;
+        //self.csr.write_csr(MTVEC,  (-0x200 as i64) as u64);
         self.is_halted = false;
     }
 
@@ -515,6 +599,18 @@ impl CPU {
                     self.pc.wrapping_add(4)
                 }
             }
+            Instruction::C_LUI(rd, nzimm) => {
+                let uimm = self.registers.read_reg(rd) + (self.sign_extend_32_64(nzimm as i32) as u64);
+                self.registers.write_reg(rd, uimm);
+
+                self.pc.wrapping_add(2)
+            }
+            Instruction::C_ADDI(rd, value) => {
+                println!("Opcode C.ADDI (x{}, offset {:x}", rd, value);
+                let result = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(value));
+                self.registers.write_reg(rd, result as u64);
+                self.pc.wrapping_add(2)
+            }
             _ => panic!("Instruction not implemented")
         }
     }
@@ -526,9 +622,16 @@ struct MemoryBus {
 
 impl MemoryBus {
     fn new(boot_buffer: Vec<u8>) -> MemoryBus {
+        let mut ram = vec![0; MAX_RAM_SIZE].into_boxed_slice();
+        let boot_rom = boot_buffer.into_boxed_slice();
+
+        let limit = boot_rom.len();
+
+        ram[..limit].copy_from_slice(&boot_rom[..limit]);
+
         MemoryBus {
-            boot_rom: boot_buffer.into_boxed_slice(),
-            ram: vec![0; MAX_RAM_SIZE].into_boxed_slice(),
+            boot_rom,
+            ram,
         }
     }
     fn read_byte(&self, address: u64) -> u8 {
@@ -679,15 +782,16 @@ fn run(mut cpu: CPU) {
 fn main() {
     let matches = App::new("Praxis PC Emulator")
         .author("Michelle Darcy <mdarcy137@gmail.com")
-        .arg(Arg::with_name("bootrom")
+        .arg(Arg::with_name("kernel")
             .short("b")
             .required(true)
-            .default_value("./bios/mlm.bin")
+            .default_value("./sys/kernel")
             .value_name("FILE"))
         .get_matches();
 
-    let boot_buffer = matches.value_of("bootrom").map(|path| buffer_from_file(path)).unwrap();
-    let cpu = CPU::new(boot_buffer);
+    let kernel = matches.value_of("kernel").map(|path| buffer_from_file(path)).unwrap();
+
+    let cpu = CPU::new(kernel);
     run(cpu);
 
     println!("Exiting...");
