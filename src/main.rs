@@ -64,9 +64,10 @@ enum Instruction {
     CSRRS(u8, u8, u16),
     MUL(u8, u8, u8),
 
-    C_ADD(u8, u8),
-    C_ADDI(u8, i32),
-    C_LUI(u8, i32),
+    CXADD(u8, u8),
+    CXADDI(u8, i32),
+    CXLUI(u8, i32),
+    CXSDSP(u8, i32),
 
     EBREAK,
     NOP,
@@ -98,7 +99,7 @@ impl Instruction {
                     },
                     1 => {
                         match Self::get_rvc_funct3(word) {
-                            0 => Some(Instruction::C_ADDI(Self::get_rvc_rs1rd(word), Self::get_rvc_nzimm(word))),
+                            0 => Some(Instruction::CXADDI(Self::get_rvc_rs1rd(word), Self::get_rvc_nzimm(word))),
                             1 => panic!("Unimplemented RVC Op: C.ADDIW"),
                             2 => panic!("Unimplemented RVC Op: C.LI"),
                             3 => {
@@ -106,7 +107,7 @@ impl Instruction {
                                 if rd == 2 {
                                     panic!("Unimplemented RVC Op: C.ADDI16SP")
                                 } else {
-                                    Some(Instruction::C_LUI(rd, Self::get_rvc_nzimm(word)))
+                                    Some(Instruction::CXLUI(rd, Self::get_rvc_nzimm(word)))
                                 }
                             },
                             4 => panic!("Unimplemented RVC Op: Compressed bitwise instructions (01/100)"),
@@ -135,7 +136,7 @@ impl Instruction {
                                     },
                                     true => {
                                         if rs2 > 0 {
-                                            Some(Instruction::C_ADD(rs1rd, rs2))
+                                            Some(Instruction::CXADD(rs1rd, rs2))
                                         } else {
                                             if rs1rd > 0 {
                                                 panic!("Unimplemented RVC Op: C.JALR")
@@ -148,7 +149,7 @@ impl Instruction {
                             },
                             5 => panic!("Unimplemented RVC Op: C.FSDSP"),
                             6 => panic!("Unimplemented RVC Op: C.SWSP"),
-                            7 => panic!("Unimplemented RVC Op: C.SDSP"),
+                            7 => Some(Instruction::CXSDSP(Self::get_rvc_rs2(word), Self::get_rvc_imm(word))),
                             _ => None,
                         }
                     },
@@ -258,6 +259,30 @@ impl Instruction {
 
     fn get_rvc_bit12(word: u32) -> bool {
         ((word >> 12) & 0b1) != 0
+    }
+
+    fn get_rvc_imm(word: u32) -> i32 {
+        let opcode = Self::get_rvc_opcode(word);
+        let funct3 = Self::get_rvc_funct3(word);
+        let imm;
+        if opcode == 0 {
+            panic!("get_rvc_imm(): unimplemented decoder [0]")
+        } else if opcode == 1 {
+            panic!("get_rvc_imm(): unimplemented decoder [1]")
+        } else if opcode == 2 {
+            match funct3 {
+                5 => {
+                    imm = (((word >> 7) & 0b111) << 6 | ((word >> 10) & 0b111) << 3) as i32;
+                }                
+                7 => {
+                    imm = (((word >> 7) & 0b111) << 6 | ((word >> 10) & 0b111) << 3) as i32;
+                }
+                _ => panic!("get_rvc_imm(): unimplemented decoder [2]")
+            }
+        } else {
+            panic!("get_rvc_imm(): invalid opcode")
+        }
+        imm
     }
 
     fn get_rvc_nzimm(word: u32) -> i32 {
@@ -596,21 +621,29 @@ impl CPU {
                 self.registers.write_reg(rd, result);
                 self.pc.wrapping_add(4)
             }
-            Instruction::C_LUI(rd, nzimm) => {
+            Instruction::CXLUI(rd, nzimm) => {
                 let uimm = self.registers.read_reg(rd) + (self.sign_extend_32_64(nzimm as i32) as u64);
                 self.registers.write_reg(rd, uimm);
 
                 self.pc.wrapping_add(2)
             }
-            Instruction::C_ADDI(rd, value) => {
+            Instruction::CXADDI(rd, value) => {
                 println!("Opcode C.ADDI (x{}, offset {:x}", rd, value);
                 let result = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(value));
                 self.registers.write_reg(rd, result as u64);
                 self.pc.wrapping_add(2)
             }
-            Instruction::C_ADD(rs2, rd) => {
+            Instruction::CXADD(rs2, rd) => {
+                println!("Opcode: C.ADD");
                 let result = self.registers.read_reg(rd).wrapping_add(self.registers.read_reg(rs2)); 
                 self.registers.write_reg(rd, result);
+                self.pc.wrapping_add(2)
+            }
+            Instruction::CXSDSP(rs2, imm) => {
+                println!("Opcode: C.SDSP");
+                let address = self.registers.read_reg(2).wrapping_add(self.sign_extend_32_64(imm));
+                let stored = self.registers.read_reg(rs2);
+                self.bus.write_dword(address, stored);
                 self.pc.wrapping_add(2)
             }
             _ => panic!("Instruction not implemented")
