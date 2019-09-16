@@ -62,7 +62,9 @@ enum Instruction {
     ANDI(u8, u8, i32),
     ORI(u8, u8, i32),
     CSRRS(u8, u8, u16),
+    MUL(u8, u8, u8),
 
+    C_ADD(u8, u8),
     C_ADDI(u8, i32),
     C_LUI(u8, i32),
 
@@ -120,7 +122,30 @@ impl Instruction {
                             1 => panic!("Unimplemented RVC Op: C.FLDSP"),
                             2 => panic!("Unimplemented RVC Op: C.LWSP"),
                             3 => panic!("Unimplemented RVC Op: C.LDSP"),
-                            4 => panic!("Unimplemented RVC Op: (01/100) Jump Instructions"),
+                            4 => {
+                                let rs2 = Self::get_rvc_rs2(word);
+                                let rs1rd = Self::get_rvc_rs1rd(word);
+                                match Self::get_rvc_bit12(word) {
+                                    false => {
+                                        if rs2 > 0 {
+                                            panic!("Unimplemented RVC Op: C.MV")
+                                        } else {
+                                            panic!("Unimplemented RVC Op: C.JR")
+                                        }
+                                    },
+                                    true => {
+                                        if rs2 > 0 {
+                                            Some(Instruction::C_ADD(rs1rd, rs2))
+                                        } else {
+                                            if rs1rd > 0 {
+                                                panic!("Unimplemented RVC Op: C.JALR")
+                                            } else {
+                                                panic!("Unimplemented RVC Op: C.EBREAK")
+                                            }
+                                        }
+                                    }
+                                }
+                            },
                             5 => panic!("Unimplemented RVC Op: C.FSDSP"),
                             6 => panic!("Unimplemented RVC Op: C.SWSP"),
                             7 => panic!("Unimplemented RVC Op: C.SDSP"),
@@ -168,7 +193,7 @@ impl Instruction {
                             0 => {
                                 match Self::get_funct7(word) {
                                     0 => panic!("Unimplemented opcode: ADD"),
-                                    1 => panic!("Unimplemented opcode: MUL"),
+                                    1 => Some(Instruction::MUL(Self::get_rs1(word), Self::get_rs2(word), Self::get_rd(word))),
                                     0x20 => panic!("Unimplemented opcode: SUB"),
                                     _ => None
                                 }
@@ -224,7 +249,15 @@ impl Instruction {
     }
 
     fn get_rvc_rs1rd(word: u32) -> u8 {
-        ((word >> 7) & 0b11111 ) as u8
+        ((word >> 7) & 0b11111) as u8
+    }
+
+    fn get_rvc_rs2(word: u32) -> u8 {
+        ((word >> 2) & 0b11111) as u8
+    }
+
+    fn get_rvc_bit12(word: u32) -> bool {
+        ((word >> 12) & 0b1) != 0
     }
 
     fn get_rvc_nzimm(word: u32) -> i32 {
@@ -558,6 +591,11 @@ impl CPU {
                     self.pc.wrapping_add(4)
                 }
             }
+            Instruction::MUL(rs1, rs2, rd) => {
+                let result = self.registers.read_reg(rs1) * self.registers.read_reg(rs2);
+                self.registers.write_reg(rd, result);
+                self.pc.wrapping_add(4)
+            }
             Instruction::C_LUI(rd, nzimm) => {
                 let uimm = self.registers.read_reg(rd) + (self.sign_extend_32_64(nzimm as i32) as u64);
                 self.registers.write_reg(rd, uimm);
@@ -568,6 +606,11 @@ impl CPU {
                 println!("Opcode C.ADDI (x{}, offset {:x}", rd, value);
                 let result = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(value));
                 self.registers.write_reg(rd, result as u64);
+                self.pc.wrapping_add(2)
+            }
+            Instruction::C_ADD(rs2, rd) => {
+                let result = self.registers.read_reg(rd).wrapping_add(self.registers.read_reg(rs2)); 
+                self.registers.write_reg(rd, result);
                 self.pc.wrapping_add(2)
             }
             _ => panic!("Instruction not implemented")
