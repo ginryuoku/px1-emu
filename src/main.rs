@@ -442,11 +442,10 @@ impl Instruction {
     }
 
     fn get_i_imm(word: u32) -> i32 {
-        let mut i_imm: u32 = word >> 20;
-        if i_imm & 0x800 == 0x800 {
-            i_imm |= 0xFFFF_F000;
-        }
-        i_imm as i32
+        let mut disp12 = (word >> 20) as i32;
+	    disp12 |= -(disp12 & 0x800);
+        println!("get_i_imm: input 0x{:x}, output 0x{:x}", (word >> 20) as i32, disp12);
+        disp12
     }
 }
 
@@ -596,10 +595,12 @@ impl CPU {
                 self.pc
             }
             Instruction::JALR(rd, rs1, offset) => {
-                let new_offset = ((self.registers.read_reg(rs1) as i64)).wrapping_add(offset as i64) as u64 & (-2 as i64) as u64;
-                println!("Opcode JALR: jumping to {:x}, offset {:x}", self.pc.wrapping_add((new_offset as i64) as u64), new_offset);
-                self.pc = self.pc.wrapping_add(new_offset);
+                let reg_rs1 = self.registers.read_reg(rs1);
+                // & (-2 as i64)
+                let new_offset = reg_rs1.wrapping_add(self.sign_extend_32_64(offset)) & ((-2 as i64) as u64);
+                println!("Opcode JALR: offset 0x{:x}, sign_extended 0x{:x} new_offset 0x{:x}", offset, self.sign_extend_32_64(offset), new_offset);
                 self.registers.write_reg(rd, self.pc + 4);
+                self.pc = new_offset;
                 if new_offset == 0 {
                     println!("JALR: attempting infinite loop at PC {:x}", self.pc);
                     self.pc = self.pc.wrapping_add(4);
@@ -607,7 +608,7 @@ impl CPU {
                 self.pc
             }            
             Instruction::AUIPC(register, target_address) => {
-                println!("Opcode: AUIPC");
+                println!("Opcode AUIPC: adding upper immediate 0x{:x} to register", target_address);
                 let result = self.sign_extend_32_64(target_address);
                 self.registers.write_reg(register, result.wrapping_add(self.pc));
                 self.pc.wrapping_add(4)
