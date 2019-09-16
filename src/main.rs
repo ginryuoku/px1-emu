@@ -639,7 +639,7 @@ impl MemoryBus {
     fn read_byte(&self, address: u64) -> u8 {
         let address = address as usize;
         match address {
-            ROM_START ... ROM_END => {
+            ROM_START ..= ROM_END => {
                 let rom_addr = address.wrapping_sub(ROM_START);
                 if rom_addr > self.boot_rom.len() {
                     0
@@ -647,7 +647,7 @@ impl MemoryBus {
                     self.boot_rom[rom_addr]
                 }
             }
-            RAM_START ... RAM_END => {
+            RAM_START ..= RAM_END => {
                 self.ram[address-RAM_START] 
             }
             _ => {
@@ -659,7 +659,7 @@ impl MemoryBus {
     fn read_word(&self, address: u64) -> u32 {
         let address = address as usize;
         match address {
-            ROM_START ... ROM_END => {
+            ROM_START ..= ROM_END => {
                 let rom_addr = address.wrapping_sub(ROM_START);
                 if rom_addr > self.boot_rom.len() {
                     0
@@ -671,7 +671,7 @@ impl MemoryBus {
                     word
                 }
             }
-            RAM_START ... RAM_END => {
+            RAM_START ..= RAM_END => {
                 let word =  (self.ram[address-RAM_START+0] as u32) << 0 | 
                             (self.ram[address-RAM_START+1] as u32) << 8 | 
                             (self.ram[address-RAM_START+2] as u32) << 16 | 
@@ -688,7 +688,7 @@ impl MemoryBus {
     fn read_dword(&self, address: u64) -> u64 {
         let address = address as usize;
         match address {
-            ROM_START ... ROM_END => {
+            ROM_START ..= ROM_END => {
                 let rom_addr = address.wrapping_sub(ROM_START);
                 if rom_addr > self.boot_rom.len() {
                     0
@@ -705,7 +705,7 @@ impl MemoryBus {
                 }
 
             }
-            RAM_START ... RAM_END => {
+            RAM_START ..= RAM_END => {
                 let word =  (self.ram[address-RAM_START+0] as u64) << 0 | 
                             (self.ram[address-RAM_START+1] as u64) << 8 | 
                             (self.ram[address-RAM_START+2] as u64) << 16 | 
@@ -726,7 +726,7 @@ impl MemoryBus {
     fn write_byte(&mut self, address: u64, value: u8) {
         let address = address as usize;
         match address {
-            RAM_START ... RAM_END => {
+            RAM_START ..= RAM_END => {
                 self.ram[address-RAM_START] = value;
             }
             _ => {
@@ -737,13 +737,13 @@ impl MemoryBus {
     fn write_word(&mut self, address: u64, value: u32) {
         let address = address as usize;
         match address {
-            ROM_START ... ROM_END => {
+            ROM_START ..= ROM_END => {
                 self.boot_rom[address-ROM_START+0] = ((value << 0) & 0xFF) as u8;
                 self.boot_rom[address-ROM_START+1] = ((value << 8) & 0xFF) as u8; 
                 self.boot_rom[address-ROM_START+2] = ((value << 16) & 0xFF) as u8;
                 self.boot_rom[address-ROM_START+3] = ((value << 24) & 0xFF) as u8; 
             }
-            RAM_START ... RAM_END => {
+            RAM_START ..= RAM_END => {
                 self.ram[address-RAM_START+0] = ((value << 0) & 0xFF) as u8;
                 self.ram[address-RAM_START+1] = ((value << 8) & 0xFF) as u8; 
                 self.ram[address-RAM_START+2] = ((value << 16) & 0xFF) as u8;
@@ -757,7 +757,7 @@ impl MemoryBus {
     fn write_dword(&mut self, address: u64, value: u64) {
         let address = address as usize;
         match address {
-            RAM_START ... RAM_END => {
+            RAM_START ..= RAM_END => {
                 self.ram[address-RAM_START+0] = ((value << 0) & 0xFF) as u8;
                 self.ram[address-RAM_START+1] = ((value << 8) & 0xFF) as u8; 
                 self.ram[address-RAM_START+2] = ((value << 16) & 0xFF) as u8;
