@@ -1,3 +1,5 @@
+#![warn(non_camel_case_types)]
+
 // const declares
 const NUM_X: usize = 32;
 
@@ -8,10 +10,6 @@ const RAM_END: usize = RAM_START + MAX_RAM_SIZE - 1;
 const MAX_ROM_SIZE: usize = 1024 * 1024;
 const ROM_START: usize = 0xFFFF_FFFF_FFF0_0000;
 const ROM_END: usize = 0xFFFF_FFFF_FFFF_FFFF;
-
-const MGIA_BUFFER_SIZE: usize = 0x10000;
-const MGIA_START: usize = 0xFF0000;
-const MGIA_END: usize = MGIA_START + MGIA_BUFFER_SIZE - 1;
 
 // const declares: CSR
 /*
@@ -40,49 +38,10 @@ const MBADADDR: usize = 0x343;
 
 // use declares
 extern crate clap;
-extern crate goblin;
+//extern crate goblin;
 use clap::{Arg, App};
-use goblin::{Object};
+//use goblin::{Object};
 use std::io::Read;
-
-enum InstFormat {
-    R, I, S, U,
-}
-
-struct InstR {
-    opcode: u8,
-    funct3: u8,
-    funct7: u8,
-    rs1: u8,
-    rs2: u8,
-    rd: u8,
-}
-
-struct InstI {
-    opcode: u8,
-    funct3: u8,
-    rs1: u8,
-    rd: u8,
-    immediate: i32,
-}
-
-struct InstS {
-    opcode: u8,
-    funct3: u8,
-    rs1: u8,
-    rs2: u8,
-    immediate: i32,
-}
-
-struct InstU {
-    opcode: u8,
-    rd: u8,
-    immediate: i32
-}
-
-enum ImmediateFormat {
-    I, S, B, U, J
-}
 
 enum Instruction {
     ADDI(u8, i32),
@@ -92,12 +51,12 @@ enum Instruction {
     BEQ(u8, u8, i32),
     LB(u8, u8, i32),
     LBU(u8, u8, i32),
-    LH(u8, u8, i32),
+    //LH(u8, u8, i32),
     LW(u8, u8, i32),
     LD(u8, u8, i32),
     SB(u8, u8, i32),
-    SH(u8, u8, i32),
-    SW(u8, u8, i32),
+    //SH(u8, u8, i32),
+    //SW(u8, u8, i32),
     SD(u8, u8, i32),
     OR(u8, u8, u8),
     ANDI(u8, u8, i32),
