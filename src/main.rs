@@ -66,6 +66,7 @@ enum Instruction {
 
     CXADD(u8, u8),
     CXADDI(u8, i32),
+    CXADDI4SPN(u8, i32),
     CXLUI(u8, i32),
     CXSDSP(u8, i32),
 
@@ -86,7 +87,7 @@ impl Instruction {
                 match opcode_c {
                     0 => {
                         match Self::get_rvc_funct3(word) {
-                            0 => panic!("Unimplemented RVC Op: C.ADDI4SPN"),
+                            0 => Some(Instruction::CXADDI4SPN(Self::get_rvc_rs2rd_815(word), Self::get_rvc_imm(word))),
                             1 => panic!("Unimplemented RVC Op: C.FLD"),
                             2 => panic!("Unimplemented RVC Op: C.LW"),
                             3 => panic!("Unimplemented RVC Op: C.LD"),
@@ -110,7 +111,33 @@ impl Instruction {
                                     Some(Instruction::CXLUI(rd, Self::get_rvc_nzimm(word)))
                                 }
                             },
-                            4 => panic!("Unimplemented RVC Op: Compressed bitwise instructions (01/100)"),
+                            4 => {
+                                match Self::get_rvc_bitwise_high(word) {
+                                    0 => panic!("Unimplemented RVC Op: C.SRLI64"),
+                                    1 => panic!("Unimplemented RVC Op: C.SRAI64"),
+                                    2 => panic!("Unimplemented RVC Op: C.ANDI"),
+                                    3 => {
+                                        if Self::get_rvc_bit12(word) == false {
+                                            match Self::get_rvc_bitwise_low(word) {
+                                                0 => panic!("Unimplemented RVC Op: C.SUB"),
+                                                1 => panic!("Unimplemented RVC Op: C.XOR"),
+                                                2 => panic!("Unimplemented RVC Op: C.OR"),
+                                                3 => panic!("Unimplemented RVC Op: C.AND"),
+                                                _ => panic!("get_rvc_bitwise_low() returned uncaught value")
+                                            }
+                                        } else {
+                                            match Self::get_rvc_bitwise_low(word) {
+                                                0 => panic!("Unimplemented RVC Op: C.SUBW"),
+                                                1 => panic!("Unimplemented RVC Op: C.ADDW"),
+                                                2 => panic!("Unimplemented RVC Op: reserved (low: 10)"),
+                                                3 => panic!("Unimplemented RVC Op: reserved (low: 11)"),
+                                                _ => panic!("get_rvc_bitwise_low() returned uncaught value")
+                                            }
+                                        }
+                                    },
+                                    _ => panic!("get_rvc_bitwise_high() returned uncaught value"),
+                                }
+                            },
                             5 => panic!("Unimplemented RVC Op: C.J"),
                             6 => panic!("Unimplemented RVC Op: C.BEQZ"),
                             7 => panic!("Unimplemented RVC Op: C.BNEZ"),                            
@@ -253,8 +280,24 @@ impl Instruction {
         ((word >> 7) & 0b11111) as u8
     }
 
+    fn get_rvc_rs2rd_815(word: u32) -> u8 {
+        (((word >> 2) & 0b111) << 3) as u8
+    }
+
+    fn get_rvc_rs1_815(word: u32) -> u8 {
+        (((word >> 2) & 0b111) << 3) as u8
+    }
+
     fn get_rvc_rs2(word: u32) -> u8 {
         ((word >> 2) & 0b11111) as u8
+    }
+
+    fn get_rvc_bitwise_low(word: u32) -> u8 {
+        ((word >> 5) & 0b11) as u8
+    }
+
+    fn get_rvc_bitwise_high(word: u32) -> u8 {
+        ((word >> 10) & 0b11) as u8
     }
 
     fn get_rvc_bit12(word: u32) -> bool {
@@ -266,7 +309,12 @@ impl Instruction {
         let funct3 = Self::get_rvc_funct3(word);
         let imm;
         if opcode == 0 {
-            panic!("get_rvc_imm(): unimplemented decoder [0]")
+            match funct3 {
+                0 => {
+                    imm = (((word >> 6) & 0b1) << 2 | ((word >> 5) & 0b1) << 3 | ((word >> 11) & 0b11) << 4 | ((word >> 9) & 0b111) << 6) as i32;
+                }
+                _ => panic!("get_rvc_imm(): unimplemented decoder [0]")
+            }
         } else if opcode == 1 {
             panic!("get_rvc_imm(): unimplemented decoder [1]")
         } else if opcode == 2 {
@@ -510,7 +558,7 @@ impl CPU {
     fn execute(&mut self, instruction: Instruction) -> u64 {
         match instruction {
             Instruction::ADDI(rs1, value) => {
-                println!("Opcode ADDI (x{}, offset {:x}", rs1, value);
+                println!("Opcode ADDI (x{}, offset 0x{:x})", rs1, value);
                 let result = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(value));
                 self.registers.write_reg(rs1, result as u64);
                 self.pc.wrapping_add(4)
@@ -635,6 +683,12 @@ impl CPU {
                 self.registers.write_reg(rd, result as u64);
                 self.pc.wrapping_add(2)
             }
+            Instruction::CXADDI4SPN(rd, value) => {
+                println!("Opcode C.ADDI4SPN (x{}, offset {:x}", rd, value);
+                let result = self.registers.read_reg(2).wrapping_add(value as u64);
+                self.registers.write_reg(rd, result);
+                self.pc.wrapping_add(2)
+            }            
             Instruction::CXADD(rs2, rd) => {
                 println!("Opcode: C.ADD");
                 let result = self.registers.read_reg(rd).wrapping_add(self.registers.read_reg(rs2)); 
