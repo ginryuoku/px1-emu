@@ -7,7 +7,7 @@ const MAX_RAM_SIZE: usize = 256 * 1024 * 1024;
 const RAM_START: usize = 0x8000_0000;
 const RAM_END: usize = RAM_START + MAX_RAM_SIZE - 1;
 
-const MAX_ROM_SIZE: usize = 1024 * 1024;
+//const MAX_ROM_SIZE: usize = 1024 * 1024;
 const ROM_START: usize = 0xFFFF_FFFF_FFF0_0000;
 const ROM_END: usize = 0xFFFF_FFFF_FFFF_FFFF;
 
@@ -400,14 +400,14 @@ impl CSR {
 
 struct Registers {
     reg_x: [u64; NUM_X],
-    reg_f: [u64; NUM_X]
+    //reg_f: [u64; NUM_X]
 }
 
 impl Registers {
     fn new() -> Registers {
         Registers {
             reg_x: [0; NUM_X],
-            reg_f: [0; NUM_X],
+            //reg_f: [0; NUM_X],
         }
     }
     fn write_reg(&mut self, reg_num: u8, value: u64) {
@@ -424,6 +424,7 @@ impl Registers {
             self.reg_x[reg_num as usize]
         }
     }
+    /*
     fn read_fpreg(&mut self, reg_num: u8) -> u64 {
         if reg_num == 0 {
             0
@@ -437,6 +438,7 @@ impl Registers {
             self.reg_f[register] = value;
         }
     }
+    */
 }
 
 struct CPU {
@@ -767,6 +769,7 @@ impl MemoryBus {
             }
         }
     }
+    /*
     fn write_word(&mut self, address: u64, value: u32) {
         let address = address as usize;
         match address {
@@ -787,6 +790,7 @@ impl MemoryBus {
             }
         }
     }
+    */
     fn write_dword(&mut self, address: u64, value: u64) {
         let address = address as usize;
         match address {
