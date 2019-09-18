@@ -48,6 +48,7 @@ enum Instruction {
     AUIPC(u8, i32),
     JAL(u8, i32),
     JALR(u8, u8, i32),
+    LUI(u8, i32),
     BEQ(u8, u8, i32),
     LB(u8, u8, i32),
     LBU(u8, u8, i32),
@@ -58,6 +59,7 @@ enum Instruction {
     //SH(u8, u8, i32),
     //SW(u8, u8, i32),
     SD(u8, u8, i32),
+    SLLIW(u8, u8, i32),
     OR(u8, u8, u8),
     ANDI(u8, u8, i32),
     ORI(u8, u8, i32),
@@ -66,16 +68,22 @@ enum Instruction {
     MUL(u8, u8, u8),
 
     CXADD(u8, u8),
+    CXMV(u8, u8),
     CXADDI(u8, i32),
+    CXADDIW(u8, i32),
     CXADDI4SPN(u8, i32),
     CXOR(u8, u8),
     CXAND(u8, u8),
     CXLI(u8, i32),
     CXLUI(u8, i32),
+    CXLDSP(u8, i32),
+    CXJR(u8),
+    CXSD(u8, u8, i32),
     CXSDSP(u8, i32),
+    CXSLLI(u8, i32),
 
     EBREAK,
-    NOP,
+    //NOP,
 }
 
 impl Instruction {
@@ -97,14 +105,14 @@ impl Instruction {
                             4 => panic!("Illegal RVC-Op: Reserved"),
                             5 => panic!("Unimplemented RVC Op: C.FSD"),
                             6 => panic!("Unimplemented RVC Op: C.SW"),
-                            7 => panic!("Unimplemented RVC Op: C.SD"),
+                            7 => Some(Instruction::CXSD(Self::get_rvc_rs1rd_815(word), Self::get_rvc_rs2_815(word), Self::get_rvc_imm(word))),
                             _ => None,
                         }
                     },
                     1 => {
                         match Self::get_rvc_funct3(word) {
                             0 => Some(Instruction::CXADDI(Self::get_rvc_rs1rd(word), Self::get_rvc_nzimm(word))),
-                            1 => panic!("Unimplemented RVC Op: C.ADDIW"),
+                            1 => Some(Instruction::CXADDIW(Self::get_rvc_rs1rd(word), Self::get_rvc_imm(word))),
                             2 => Some(Instruction::CXLI(Self::get_rvc_rs1rd(word), Self::get_rvc_imm(word))),
                             3 => {
                                 let rd = Self::get_rvc_rs1rd(word);
@@ -148,20 +156,20 @@ impl Instruction {
                         }
                     },
                     2 => {
+                        let rs1rd = Self::get_rvc_rs1rd(word);
                         match Self::get_rvc_funct3(word) {
-                            0 => panic!("Unimplemented RVC Op: C.SLLI64"),
+                            0 => Some(Instruction::CXSLLI(rs1rd, Self::get_rvc_imm(word))),
                             1 => panic!("Unimplemented RVC Op: C.FLDSP"),
                             2 => panic!("Unimplemented RVC Op: C.LWSP"),
-                            3 => panic!("Unimplemented RVC Op: C.LDSP"),
+                            3 => Some(Instruction::CXLDSP(rs1rd, Self::get_rvc_imm(word))),
                             4 => {
                                 let rs2 = Self::get_rvc_rs2(word);
-                                let rs1rd = Self::get_rvc_rs1rd(word);
                                 match Self::get_rvc_bit12(word) {
                                     false => {
                                         if rs2 > 0 {
-                                            panic!("Unimplemented RVC Op: C.MV")
+                                            Some(Instruction::CXMV(rs2, Self::get_rvc_rs1rd(word)))
                                         } else {
-                                            panic!("Unimplemented RVC Op: C.JR")
+                                            Some(Instruction::CXJR(Self::get_rvc_rs1rd(word)))
                                         }
                                     },
                                     true => {
@@ -210,6 +218,20 @@ impl Instruction {
                         }
                     }
                     0x17 => Some(Instruction::AUIPC(Self::get_rd(word), Self::get_u_imm(word))),
+                    0x1b => {
+                        match Self::get_funct3(word) {
+                            0 => panic!("Unimplemented opcode: ADDIW"),
+                            1 => Some(Instruction::SLLIW(Self::get_rs1(word), Self::get_rd(word), Self::get_i_imm(word))),
+                            5 => {
+                                match Self::get_funct7(word) {
+                                    0 => panic!("Unimplemented opcode: SRLIW"),
+                                    0x20 => panic!("Unimplemented opcode: SRAIW"),
+                                    _ => None
+                                }
+                            }
+                            _ => None
+                        }
+                    }
                     0x23 => {
                         match Self::get_funct3(word) {
                             0 => Some(Instruction::SB(Self::get_rs1(word), Self::get_rs2(word), Self::get_s_imm(word))),
@@ -233,6 +255,7 @@ impl Instruction {
                             _ => None
                         }
                     }
+                    0x37 => Some(Instruction::LUI(Self::get_rd(word), Self::get_u_imm(word))),
                     0x63 => {
                         match Self::get_funct3(word) {
                             0 => Some(Instruction::BEQ(Self::get_rs1(word), Self::get_rs2(word), Self::get_b_imm(word))),
@@ -247,11 +270,31 @@ impl Instruction {
                     }
                     0x6f => Some(Instruction::JAL(Self::get_rd(word), Self::get_j_imm(word))),
                     0x73 => {
+                        let rs2 = Self::get_rs2(word);
                         match Self::get_funct3(word) {
                             0 => {
-                                match Self::get_funct12(word) {
-                                    0 => None,
-                                    1 => Some(Instruction::EBREAK),
+                                match Self::get_funct7(word) {
+                                    0 => {
+                                        if rs2 == 2 {
+                                            panic!("Unimplemented opcode: URET")
+                                        } else {
+                                            panic!("Unknown opcode type 0x73")
+                                        }
+                                    },
+                                    0x1 => Some(Instruction::EBREAK),
+                                    0x8 => {
+                                        if rs2 == 2 {
+                                            panic!("Unimplemented opcode: SRET")
+                                        } else if rs2 == 5 {
+                                            panic!("Unimplemented opcode: WFI")
+                                        } else {
+                                            panic!("Unknown opcode type 0x73")
+                                        }
+                                    },
+                                    0x9 => panic!("Unimplemented opcode: SFENCE.VMA"),
+                                    0x11 => panic!("Unimplemented opcode: HFENCE.BVMA"),
+                                    0x18 => panic!("Unimplemented opcode: MRET"),
+                                    0x51 => panic!("Unimplemented opcode: HFENCE.GVMA"),
                                     _ => None
                                 }
                             },
@@ -319,6 +362,9 @@ impl Instruction {
                 0 => {
                     imm = (((word >> 6) & 0b1) << 2 | ((word >> 5) & 0b1) << 3 | ((word >> 11) & 0b11) << 4 | ((word >> 9) & 0b111) << 6) as i32;
                 }
+                7 => {
+                    imm = (((word >> 10) & 0b111) << 3 | ((word >> 5) & 0b11) << 6) as i32;
+                }
                 _ => panic!("get_rvc_imm(): unimplemented decoder [0]")
             }
         } else if opcode == 1 {
@@ -327,24 +373,33 @@ impl Instruction {
                     let mut result = (((word >> 2) & 0b11111) | ((word >> 12) & 0b1) << 5) as i32;
 
                     result |= -(result & 0x20);
-                    imm = result
+                    imm = result;
                 }
                 2 => {
                     let mut result = (((word >> 2) & 0b11111) | ((word >> 12) & 0b1) << 5) as i32;
 
                     result |= -(result & 0x20);
-                    imm = result
+                    imm = result;
                 }
                 4 => {
                     let mut result = (((word >> 2) & 0b11111) | ((word >> 12) & 0b1) << 5) as i32;
 
                     result |= -(result & 0x20);
-                    imm = result
+                    imm = result;
                 }                
                 _ => panic!("get_rvc_imm(): unimplemented decoder [1]")
             }
         } else if opcode == 2 {
             match funct3 {
+                0 => {
+                    let mut result = (((word >> 2) & 0b11111) | ((word >> 12) & 0b1) << 5) as i32;
+
+                    result |= -(result & 0x20);
+                    imm = result;
+                }
+                3 => {
+                    imm = (((word >> 5) & 0b11) << 3 | ((word >> 12) & 0b1) << 5 | ((word >> 2) & 0b111) << 6) as i32;
+                }
                 5 => {
                     imm = (((word >> 7) & 0b111) << 6 | ((word >> 10) & 0b111) << 3) as i32;
                 }                
@@ -613,6 +668,11 @@ impl CPU {
                 self.registers.write_reg(register, result.wrapping_add(self.pc));
                 self.pc.wrapping_add(4)
             }
+            Instruction::LUI(rd, imm) => {
+                let uimm = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(imm as i32));
+                self.registers.write_reg(rd, uimm);
+                self.pc.wrapping_add(4)
+            }            
             Instruction::LBU(rs1, rd, imm_s) => {
                 println!("Opcode: LBU");
                 let address = self.registers.read_reg(rs1) + self.sign_extend_32_64(imm_s);
@@ -668,6 +728,13 @@ impl CPU {
                 self.registers.write_reg(rd, result);
                 self.pc.wrapping_add(4)
             }
+            Instruction::SLLIW(rs1, rd, imm_i) => {
+                let rs1_val = (self.registers.read_reg(rs1) & 0xFFFF_FFFF) as u32;
+                let shamt = (imm_i & 0b111111) as u32;
+                let result = rs1_val.wrapping_shl(shamt);
+                self.registers.write_reg(rd, result as u64);
+                self.pc.wrapping_add(4)
+            }
             Instruction::EBREAK => {
                 println!("Opcode: EBREAK");
                 self.trap(3);
@@ -689,10 +756,12 @@ impl CPU {
                 let dest = self.registers.read_reg(rs1);
                 self.csr.write_csr(csr as usize, dest);
                 self.pc.wrapping_add(4)
-            }            
+            }
+            /*
             Instruction::NOP => {
                 self.pc.wrapping_add(4)
             }
+            */
             Instruction::BEQ(rs1, rs2, b_imm) => {
                 println!("Opcode: BEQ");
                 if self.registers.read_reg(rs1) == self.registers.read_reg(rs2) {
@@ -719,13 +788,20 @@ impl CPU {
                 self.pc.wrapping_add(2)
             }
             Instruction::CXADDI(rd, value) => {
-                println!("Opcode C.ADDI (x{}, offset {:x}", rd, value);
-                let result = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(value));
+                println!("Opcode C.ADDI (x{}, offset {:x})", rd, value);
+                let rd_val = self.registers.read_reg(rd) as u32;
+                let result = self.sign_extend_32_64(rd_val.wrapping_add(value as u32) as i32);
                 self.registers.write_reg(rd, result as u64);
                 self.pc.wrapping_add(2)
             }
+            Instruction::CXADDIW(rd, value) => {
+                println!("Opcode C.ADDIW (x{}, offset {:x})", rd, value);
+                let result = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(value));
+                self.registers.write_reg(rd, result as u64);
+                self.pc.wrapping_add(2)
+            }            
             Instruction::CXADDI4SPN(rd, value) => {
-                println!("Opcode C.ADDI4SPN (x{}, offset {:x}", rd, value);
+                println!("Opcode C.ADDI4SPN (x{}, offset {:x})", rd, value);
                 let result = self.registers.read_reg(2).wrapping_add(value as u64);
                 self.registers.write_reg(rd, result);
                 self.pc.wrapping_add(2)
@@ -734,6 +810,12 @@ impl CPU {
                 println!("Opcode: C.ADD");
                 let result = self.registers.read_reg(rd).wrapping_add(self.registers.read_reg(rs2)); 
                 self.registers.write_reg(rd, result);
+                self.pc.wrapping_add(2)
+            }
+            Instruction::CXMV(rs2, rd) => {
+                println!("Opcode: C.MV");
+                let rs2_val = self.registers.read_reg(rs2);
+                self.registers.write_reg(rd, rs2_val);
                 self.pc.wrapping_add(2)
             }
             Instruction::CXOR(rs2, rd) => {
@@ -748,6 +830,21 @@ impl CPU {
                 self.registers.write_reg(rd, result);
                 self.pc.wrapping_add(2)                
             }
+            Instruction::CXJR(rs1) => {
+                println!("Opcode: C.JR");
+                self.pc = self.registers.read_reg(rs1);
+                self.pc
+            }
+            Instruction::CXLDSP(rd, imm) => {
+                let address = self.registers.read_reg(2).wrapping_add(self.sign_extend_32_64(imm));
+                self.registers.write_reg(rd, self.bus.read_dword(address));
+                self.pc.wrapping_add(2)
+            }
+            Instruction::CXSD(rs1, rs2, offset) => {
+                let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(offset));
+                self.registers.write_reg(rs2, address);
+                self.pc.wrapping_add(2)
+            }
             Instruction::CXSDSP(rs2, imm) => {
                 println!("Opcode: C.SDSP");
                 let address = self.registers.read_reg(2).wrapping_add(self.sign_extend_32_64(imm));
@@ -755,6 +852,12 @@ impl CPU {
                 self.bus.write_dword(address, stored);
                 self.pc.wrapping_add(2)
             }
+            Instruction::CXSLLI(rd, imm) => {
+                let rd_val = self.registers.read_reg(rd);
+                let result = rd_val.wrapping_shl(imm as u32);
+                self.registers.write_reg(rd, result);
+                self.pc.wrapping_add(4)
+            }            
             _ => panic!("Instruction not implemented")
         }
     }
