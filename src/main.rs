@@ -524,6 +524,16 @@ impl CSR {
             _ => {self.csr[csr_num]}
         }
     }
+
+    fn advance_by_cycles(&mut self, cycles: u64) {
+        let total_cycles = self.read_csr(0xC00).wrapping_add(cycles);
+        self.write_csr(0xC00, total_cycles);
+        println!("Cycles: {}", self.read_csr(0xC00));
+    }
+
+    fn advance(&mut self) {
+        self.advance_by_cycles(4);
+    }
 }
 
 struct Registers {
@@ -641,12 +651,14 @@ impl CPU {
                 println!("Opcode ADDI (x{}, offset 0x{:x})", rs1, value);
                 let result = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(value));
                 self.registers.write_reg(rs1, result as u64);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             },
             Instruction::JAL(rd, offset) => {
                 println!("Opcode JAL: jumping to {:x}, offset {:x}", self.pc.wrapping_add((offset as i64) as u64), offset);
                 self.registers.write_reg(rd, self.pc + 4);
                 self.pc = self.pc.wrapping_add((offset as i64) as u64);
+                self.csr.advance();
                 self.pc
             }
             Instruction::JALR(rd, rs1, offset) => {
@@ -656,21 +668,20 @@ impl CPU {
                 println!("Opcode JALR: offset 0x{:x}, sign_extended 0x{:x} new_offset 0x{:x}", offset, self.sign_extend_32_64(offset), new_offset);
                 self.registers.write_reg(rd, self.pc + 4);
                 self.pc = new_offset;
-                if new_offset == 0 {
-                    println!("JALR: attempting infinite loop at PC {:x}", self.pc);
-                    self.pc = self.pc.wrapping_add(4);
-                }
+                self.csr.advance();
                 self.pc
             }            
             Instruction::AUIPC(register, target_address) => {
                 println!("Opcode AUIPC: adding upper immediate 0x{:x} to register", target_address);
                 let result = self.sign_extend_32_64(target_address);
                 self.registers.write_reg(register, result.wrapping_add(self.pc));
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::LUI(rd, imm) => {
                 let uimm = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(imm as i32));
                 self.registers.write_reg(rd, uimm);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }            
             Instruction::LBU(rs1, rd, imm_s) => {
@@ -679,6 +690,7 @@ impl CPU {
                 // zero-extension, not sign-extension
                 let loaded = self.bus.read_byte(address) as u64;
                 self.registers.write_reg(rd, loaded as u64);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::LW(rs1, rd, imm_s) => {
@@ -687,6 +699,7 @@ impl CPU {
                 // sign-extend.
                 let loaded = ((self.bus.read_word(address) as u64) << 32) >> 32;
                 self.registers.write_reg(rd, loaded as u64);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::LD(rs1, rd, imm_s) => {
@@ -694,6 +707,7 @@ impl CPU {
                 let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(imm_s));
                 let loaded = self.bus.read_dword(address);
                 self.registers.write_reg(rd, loaded);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::SB(rs1, rs2, imm_s) => {
@@ -701,6 +715,7 @@ impl CPU {
                 let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(imm_s));
                 let stored = self.registers.read_reg(rs2) as u8;
                 self.bus.write_byte(address, stored);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::SD(rs1, rs2, imm_s) => {
@@ -708,24 +723,28 @@ impl CPU {
                 let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(imm_s));
                 let stored = self.registers.read_reg(rs2);
                 self.bus.write_dword(address, stored);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::OR(rs1, rs2, rd) => {
                 println!("Opcode: OR");
                 let result = self.registers.read_reg(rs1) | self.registers.read_reg(rs2);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::ANDI(rs1, rd, imm_i) => {
                 println!("Opcode: ANDI");
                 let result = self.registers.read_reg(rs1) & self.sign_extend_32_64((imm_i << 20) >> 20);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::ORI(rs1, rd, imm_i) => {
                 println!("Opcode: ORI");
                 let result = self.registers.read_reg(rs1) | self.sign_extend_32_64((imm_i << 20) >> 20);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::SLLIW(rs1, rd, imm_i) => {
@@ -733,11 +752,13 @@ impl CPU {
                 let shamt = (imm_i & 0b111111) as u32;
                 let result = rs1_val.wrapping_shl(shamt);
                 self.registers.write_reg(rd, result as u64);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::EBREAK => {
                 println!("Opcode: EBREAK");
                 self.trap(3);
+                self.csr.advance();
                 self.pc
             }
             // OR the CSR with the rs1 bitmask
@@ -747,6 +768,7 @@ impl CPU {
                 self.registers.write_reg(rd, src);
                 let dest = src | self.registers.read_reg(rs1);
                 self.csr.write_csr(csr as usize, dest);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::CSRRW(rs1, rd, csr) => {
@@ -755,36 +777,41 @@ impl CPU {
                 self.registers.write_reg(rd, src);
                 let dest = self.registers.read_reg(rs1);
                 self.csr.write_csr(csr as usize, dest);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             /*
             Instruction::NOP => {
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             */
             Instruction::BEQ(rs1, rs2, b_imm) => {
                 println!("Opcode: BEQ");
                 if self.registers.read_reg(rs1) == self.registers.read_reg(rs2) {
+                    self.csr.advance();
                     self.pc.wrapping_add(self.sign_extend_32_64(b_imm))
                 } else {
+                    self.csr.advance();
                     self.pc.wrapping_add(4)
                 }
             }
             Instruction::MUL(rs1, rs2, rd) => {
                 let result = self.registers.read_reg(rs1) * self.registers.read_reg(rs2);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::CXLI(rd, imm) => {
                 let uimm = self.registers.read_reg(rd) + (self.sign_extend_32_64(imm as i32) as u64);
                 self.registers.write_reg(rd, uimm);
-
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXLUI(rd, nzimm) => {
                 let uimm = self.registers.read_reg(rd) + (self.sign_extend_32_64(nzimm as i32) as u64);
                 self.registers.write_reg(rd, uimm);
-
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXADDI(rd, value) => {
@@ -792,57 +819,67 @@ impl CPU {
                 let rd_val = self.registers.read_reg(rd) as u32;
                 let result = self.sign_extend_32_64(rd_val.wrapping_add(value as u32) as i32);
                 self.registers.write_reg(rd, result as u64);
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXADDIW(rd, value) => {
                 println!("Opcode C.ADDIW (x{}, offset {:x})", rd, value);
                 let result = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(value));
                 self.registers.write_reg(rd, result as u64);
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }            
             Instruction::CXADDI4SPN(rd, value) => {
                 println!("Opcode C.ADDI4SPN (x{}, offset {:x})", rd, value);
                 let result = self.registers.read_reg(2).wrapping_add(value as u64);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }            
             Instruction::CXADD(rs2, rd) => {
                 println!("Opcode: C.ADD");
                 let result = self.registers.read_reg(rd).wrapping_add(self.registers.read_reg(rs2)); 
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXMV(rs2, rd) => {
                 println!("Opcode: C.MV");
                 let rs2_val = self.registers.read_reg(rs2);
                 self.registers.write_reg(rd, rs2_val);
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXOR(rs2, rd) => {
                 println!("Opcode: C.OR");
                 let result = self.registers.read_reg(rs2) | self.registers.read_reg(rd);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(2)                
             }            
             Instruction::CXAND(rs2, rd) => {
                 println!("Opcode: C.AND");
                 let result = self.registers.read_reg(rs2) & self.registers.read_reg(rd);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(2)                
             }
             Instruction::CXJR(rs1) => {
                 println!("Opcode: C.JR");
                 self.pc = self.registers.read_reg(rs1);
+                self.csr.advance();
                 self.pc
             }
             Instruction::CXLDSP(rd, imm) => {
                 let address = self.registers.read_reg(2).wrapping_add(self.sign_extend_32_64(imm));
                 self.registers.write_reg(rd, self.bus.read_dword(address));
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXSD(rs1, rs2, offset) => {
                 let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(offset));
                 self.registers.write_reg(rs2, address);
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXSDSP(rs2, imm) => {
@@ -850,12 +887,14 @@ impl CPU {
                 let address = self.registers.read_reg(2).wrapping_add(self.sign_extend_32_64(imm));
                 let stored = self.registers.read_reg(rs2);
                 self.bus.write_dword(address, stored);
+                self.csr.advance();
                 self.pc.wrapping_add(2)
             }
             Instruction::CXSLLI(rd, imm) => {
                 let rd_val = self.registers.read_reg(rd);
                 let result = rd_val.wrapping_shl(imm as u32);
                 self.registers.write_reg(rd, result);
+                self.csr.advance();
                 self.pc.wrapping_add(4)
             }            
             _ => panic!("Instruction not implemented")
