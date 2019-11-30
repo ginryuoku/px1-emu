@@ -821,8 +821,7 @@ impl CPU {
             }
             Instruction::CXADDI(rd, value) => {
                 println!("Opcode C.ADDI (x{}, offset {:x})", rd, value);
-                let rd_val = self.registers.read_reg(rd) as u32;
-                let result = self.sign_extend_32_64(rd_val.wrapping_add(value as u32) as i32);
+                let result = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(value));
                 self.registers.write_reg(rd, result as u64);
                 self.csr.advance();
                 self.pc.wrapping_add(2)
