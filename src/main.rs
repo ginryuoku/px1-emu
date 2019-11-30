@@ -103,14 +103,14 @@ impl Instruction {
                 match opcode_c {
                     0 => {
                         match Self::get_rvc_funct3(word) {
-                            0 => Some(Instruction::CXADDI4SPN(Self::get_rvc_rs1rd_815(word), Self::get_rvc_imm(word))),
+                            0 => Some(Instruction::CXADDI4SPN(Self::get_rvc_rs1rd_compact(word), Self::get_rvc_imm(word))),
                             1 => panic!("Unimplemented RVC Op: C.FLD"),
                             2 => panic!("Unimplemented RVC Op: C.LW"),
                             3 => panic!("Unimplemented RVC Op: C.LD"),
                             4 => panic!("Illegal RVC-Op: Reserved"),
                             5 => panic!("Unimplemented RVC Op: C.FSD"),
                             6 => panic!("Unimplemented RVC Op: C.SW"),
-                            7 => Some(Instruction::CXSD(Self::get_rvc_rs1rd_815(word), Self::get_rvc_rs2_815(word), Self::get_rvc_imm(word))),
+                            7 => Some(Instruction::CXSD(Self::get_rvc_rs1rd_compact(word), Self::get_rvc_rs2_compact(word), Self::get_rvc_imm(word))),
                             _ => None,
                         }
                     },
@@ -137,8 +137,8 @@ impl Instruction {
                                             match Self::get_rvc_bitwise_low(word) {
                                                 0 => panic!("Unimplemented RVC Op: C.SUB"),
                                                 1 => panic!("Unimplemented RVC Op: C.XOR"),
-                                                2 => Some(Instruction::CXOR(Self::get_rvc_rs1rd_815(word), Self::get_rvc_rs2_815(word))),
-                                                3 => Some(Instruction::CXAND(Self::get_rvc_rs1rd_815(word), Self::get_rvc_rs2_815(word))),
+                                                2 => Some(Instruction::CXOR(Self::get_rvc_rs1rd_compact(word), Self::get_rvc_rs2_compact(word))),
+                                                3 => Some(Instruction::CXAND(Self::get_rvc_rs1rd_compact(word), Self::get_rvc_rs2_compact(word))),
                                                 _ => panic!("get_rvc_bitwise_low() returned uncaught value")
                                             }
                                         } else {
@@ -334,11 +334,11 @@ impl Instruction {
         ((word >> 7) & 0b11111) as u8
     }
 
-    fn get_rvc_rs1rd_815(word: u32) -> u8 {
+    fn get_rvc_rs1rd_compact(word: u32) -> u8 {
         (((word >> 7) & 0b111) + 8) as u8
     }
 
-    fn get_rvc_rs2_815(word: u32) -> u8 {
+    fn get_rvc_rs2_compact(word: u32) -> u8 {
         (((word >> 2) & 0b111) + 8) as u8
     }
 
