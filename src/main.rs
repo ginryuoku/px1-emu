@@ -7,6 +7,9 @@ const MAX_RAM_SIZE: usize = 256 * 1024 * 1024;
 const RAM_START: usize = 0x8000_0000;
 const RAM_END: usize = RAM_START + MAX_RAM_SIZE - 1;
 
+const PRCI_START: usize = 0x1000_0000;
+const PRCI_END: usize = PRCI_START + 0x32 - 1;
+
 //const MAX_ROM_SIZE: usize = 1024 * 1024;
 const ROM_START: usize = 0xFFFF_FFFF_FFF0_0000;
 const ROM_END: usize = 0xFFFF_FFFF_FFFF_FFFF;
@@ -39,6 +42,8 @@ const MBADADDR: usize = 0x343;
 // use declares
 extern crate clap;
 //extern crate goblin;
+extern crate byteorder;
+use byteorder::{LittleEndian, ByteOrder};
 use clap::{Arg, App};
 //use goblin::{Object};
 use std::io::Read;
@@ -901,9 +906,50 @@ impl CPU {
         }
     }
 }
+
+/*
+struct UART {
+
+}
+*/
+
+// this exists exclusively because xv6 doesn't know that it's on a platform
+// that has no timer hardware
+struct PRCI {
+    prci: Box<[u8]>,
+}
+
+impl PRCI {
+    fn new() -> PRCI {
+        let prci = vec![0; 32].into_boxed_slice();
+
+        PRCI {
+            prci
+        }
+    }
+
+    fn read_byte(&self, address: usize) -> u8 {
+        if address >= 0x32 {
+            panic!("PRCI: attempted to write beyond end of known chip memory");
+        } else {
+            self.prci[address]
+        }        
+    }
+
+    fn write_byte(&mut self, address: usize, value: u8) {
+        if address >= 0x32 {
+            panic!("PRCI: attempted to write beyond end of known chip memory");
+        } else {
+            self.prci[address] = value;
+        }
+    }
+}
+
 struct MemoryBus {
     boot_rom: Box<[u8]>,
     ram: Box<[u8]>,
+    //uart: uart,
+    prci: PRCI,
 }
 
 impl MemoryBus {
@@ -918,6 +964,7 @@ impl MemoryBus {
         MemoryBus {
             boot_rom,
             ram,
+            prci: PRCI::new(),
         }
     }
     fn read_byte(&self, address: u64) -> u8 {
@@ -932,7 +979,12 @@ impl MemoryBus {
                 }
             }
             RAM_START ..= RAM_END => {
-                self.ram[address-RAM_START] 
+                println!("read_byte: address 0x{:x}, value {:x}", address, self.ram[address - RAM_START]);
+                self.ram[address - RAM_START] 
+            }
+            PRCI_START ..= PRCI_END => {
+                println!("read_byte: address 0x{:x}, value {:x}", address, self.ram[address - PRCI_START]);
+                self.prci.read_byte(address - PRCI_START)
             }
             _ => {
                 println!("Reading byte from unknown memory at address 0x{:x}", address);
@@ -948,18 +1000,12 @@ impl MemoryBus {
                 if rom_addr > self.boot_rom.len() {
                     0
                 } else {
-                    let word =  (self.boot_rom[address-ROM_START+0] as u32) << 0 | 
-                                (self.boot_rom[address-ROM_START+1] as u32) << 8 | 
-                                (self.boot_rom[address-ROM_START+2] as u32) << 16 | 
-                                (self.boot_rom[address-ROM_START+3] as u32) << 24;
+                    let word = LittleEndian::read_u32(&self.ram[(rom_addr) as usize..]);
                     word
                 }
             }
             RAM_START ..= RAM_END => {
-                let word =  (self.ram[address-RAM_START+0] as u32) << 0 | 
-                            (self.ram[address-RAM_START+1] as u32) << 8 | 
-                            (self.ram[address-RAM_START+2] as u32) << 16 | 
-                            (self.ram[address-RAM_START+3] as u32) << 24;
+                let word = LittleEndian::read_u32(&self.ram[(address-RAM_START) as usize..]);
                 word
             }
             _ => {
@@ -977,27 +1023,14 @@ impl MemoryBus {
                 if rom_addr > self.boot_rom.len() {
                     0
                 } else {
-                    let word =  (self.boot_rom[rom_addr+0] as u64) << 0 | 
-                                (self.boot_rom[rom_addr+1] as u64) << 8 | 
-                                (self.boot_rom[rom_addr+2] as u64) << 16 | 
-                                (self.boot_rom[rom_addr+3] as u64) << 24 | 
-                                (self.boot_rom[rom_addr+4] as u64) << 32 | 
-                                (self.boot_rom[rom_addr+5] as u64) << 40 | 
-                                (self.boot_rom[rom_addr+6] as u64) << 48 | 
-                                (self.boot_rom[rom_addr+7] as u64) << 56;
+                    let word = LittleEndian::read_u64(&self.ram[(rom_addr) as usize..]);
+                    println!("read_dword: address 0x{:x}, value {:x}", address, word);
                     word
                 }
-
             }
             RAM_START ..= RAM_END => {
-                let word =  (self.ram[address-RAM_START+0] as u64) << 0 | 
-                            (self.ram[address-RAM_START+1] as u64) << 8 | 
-                            (self.ram[address-RAM_START+2] as u64) << 16 | 
-                            (self.ram[address-RAM_START+3] as u64) << 24 | 
-                            (self.ram[address-RAM_START+4] as u64) << 32 | 
-                            (self.ram[address-RAM_START+5] as u64) << 40 | 
-                            (self.ram[address-RAM_START+6] as u64) << 48 | 
-                            (self.ram[address-RAM_START+7] as u64) << 56;
+                let word = LittleEndian::read_u64(&self.ram[(address-RAM_START) as usize..]);
+                println!("read_dword: address 0x{:x}, value {:x}", address, word);
                 word
             }
             _ => {
@@ -1011,50 +1044,41 @@ impl MemoryBus {
         let address = address as usize;
         match address {
             RAM_START ..= RAM_END => {
-                self.ram[address-RAM_START] = value;
+                println!("write_byte: address: {:x} old_value: {:x} new_value: {:x}", address, self.read_byte(address as u64), value);
+                self.ram[address - RAM_START] = value;
+            }
+            PRCI_START ..= PRCI_END => {
+                println!("write_byte: address: {:x} old_value: {:x} new_value: {:x}", address, self.read_byte(address as u64), value);
+                self.prci.write_byte(address - PRCI_START, value);
             }
             _ => {
-                println!("Attempting to write to unknown memory at address 0x{:x}", address);
+                panic!("Attempting to write to unknown memory at address 0x{:x}", address);
             }
         }
     }
-    /*
     fn write_word(&mut self, address: u64, value: u32) {
         let address = address as usize;
         match address {
-            ROM_START ..= ROM_END => {
-                self.boot_rom[address-ROM_START+0] = ((value << 0) & 0xFF) as u8;
-                self.boot_rom[address-ROM_START+1] = ((value << 8) & 0xFF) as u8; 
-                self.boot_rom[address-ROM_START+2] = ((value << 16) & 0xFF) as u8;
-                self.boot_rom[address-ROM_START+3] = ((value << 24) & 0xFF) as u8; 
-            }
             RAM_START ..= RAM_END => {
-                self.ram[address-RAM_START+0] = ((value << 0) & 0xFF) as u8;
-                self.ram[address-RAM_START+1] = ((value << 8) & 0xFF) as u8; 
-                self.ram[address-RAM_START+2] = ((value << 16) & 0xFF) as u8;
-                self.ram[address-RAM_START+3] = ((value << 24) & 0xFF) as u8; 
+                println!("write_word: address: {:x} old_value: {:x} new_value: {:x}", address, self.read_word(address as u64), value);                
+                let slice = &mut self.ram[(address-RAM_START) as usize..];
+                LittleEndian::write_u32(slice, value);
             }
             _ => {
-                println!("Attempting to write to unknown memory at address 0x{:x}", address);
+                panic!("Attempting to write to unknown memory at address 0x{:x}", address);
             }
         }
     }
-    */
     fn write_dword(&mut self, address: u64, value: u64) {
         let address = address as usize;
         match address {
             RAM_START ..= RAM_END => {
-                self.ram[address-RAM_START+0] = ((value << 0) & 0xFF) as u8;
-                self.ram[address-RAM_START+1] = ((value << 8) & 0xFF) as u8; 
-                self.ram[address-RAM_START+2] = ((value << 16) & 0xFF) as u8;
-                self.ram[address-RAM_START+3] = ((value << 24) & 0xFF) as u8;
-                self.ram[address-RAM_START+4] = ((value << 32) & 0xFF) as u8;
-                self.ram[address-RAM_START+5] = ((value << 40) & 0xFF) as u8; 
-                self.ram[address-RAM_START+6] = ((value << 48) & 0xFF) as u8;
-                self.ram[address-RAM_START+7] = ((value << 56) & 0xFF) as u8; 
+                println!("write_dword: address: {:x} old_value: {:x} new_value: {:x}", address, self.read_dword(address as u64), value);
+                let slice = &mut self.ram[(address-RAM_START) as usize..];
+                LittleEndian::write_u64(slice, value);
             }
             _ => {
-                println!("Attempting to write to unknown memory at address 0x{:x}", address);
+                panic!("Attempting to write to unknown memory at address 0x{:x}", address);
             }
         }
     }
