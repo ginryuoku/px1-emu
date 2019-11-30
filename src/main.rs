@@ -62,7 +62,7 @@ enum Instruction {
     LD(u8, u8, i32),
     SB(u8, u8, i32),
     //SH(u8, u8, i32),
-    //SW(u8, u8, i32),
+    SW(u8, u8, i32),
     SD(u8, u8, i32),
     SLLIW(u8, u8, i32),
     OR(u8, u8, u8),
@@ -79,6 +79,7 @@ enum Instruction {
     CXADDI4SPN(u8, i32),
     CXOR(u8, u8),
     CXAND(u8, u8),
+    CXBEQZ(u8, i32),
     CXLI(u8, i32),
     CXLUI(u8, i32),
     CXLDSP(u8, i32),
@@ -88,6 +89,7 @@ enum Instruction {
     CXSLLI(u8, i32),
 
     EBREAK,
+    MRET,
     //NOP,
 }
 
@@ -155,7 +157,7 @@ impl Instruction {
                                 }
                             },
                             5 => panic!("Unimplemented RVC Op: C.J"),
-                            6 => panic!("Unimplemented RVC Op: C.BEQZ"),
+                            6 => Some(Instruction::CXBEQZ(Self::get_rvc_rs1rd_compact(word), Self::get_rvc_imm(word))),
                             7 => panic!("Unimplemented RVC Op: C.BNEZ"),                            
                             _ => None,
                         }
@@ -241,7 +243,7 @@ impl Instruction {
                         match Self::get_funct3(word) {
                             0 => Some(Instruction::SB(Self::get_rs1(word), Self::get_rs2(word), Self::get_s_imm(word))),
                             1 => None,
-                            2 => None,
+                            2 => Some(Instruction::SW(Self::get_rs1(word), Self::get_rs2(word), Self::get_s_imm(word))),
                             3 => Some(Instruction::SD(Self::get_rs1(word), Self::get_rs2(word), Self::get_s_imm(word))),
                             _ => None
                         }
@@ -298,7 +300,7 @@ impl Instruction {
                                     },
                                     0x9 => panic!("Unimplemented opcode: SFENCE.VMA"),
                                     0x11 => panic!("Unimplemented opcode: HFENCE.BVMA"),
-                                    0x18 => panic!("Unimplemented opcode: MRET"),
+                                    0x18 => Some(Instruction::MRET),
                                     0x51 => panic!("Unimplemented opcode: HFENCE.GVMA"),
                                     _ => None
                                 }
@@ -391,7 +393,13 @@ impl Instruction {
 
                     result |= -(result & 0x20);
                     imm = result;
-                }                
+                }
+                6 => {
+                    imm = (((word >> 3) & 0b11) << 1 | ((word >> 10) & 0b11) << 3 | ((word >> 2) & 0b1) << 5 | ((word >> 5) & 0b11) << 6 | ((word >> 12) & 0b1) << 8) as i32
+                }
+                7 => {
+                    imm = (((word >> 3) & 0b11) << 1 | ((word >> 10) & 0b11) << 3 | ((word >> 2) & 0b1) << 5 | ((word >> 5) & 0b11) << 6 | ((word >> 12) & 0b1) << 8) as i32
+                }           
                 _ => panic!("get_rvc_imm(): unimplemented decoder [1]")
             }
         } else if opcode == 2 {
@@ -555,10 +563,12 @@ impl Registers {
     }
     fn write_reg(&mut self, reg_num: u8, value: u64) {
         let register = reg_num as usize;
+        let mut was = 0;
         if register != 0 {
+            was = self.reg_x[reg_num as usize];
             self.reg_x[register] = value;
         }
-        println!("Register x{} write: {:x}", register, value);
+        println!("Register x{} write: {:x} (was: {:x})", register, value, was);
     }
     fn read_reg(&mut self, reg_num: u8) -> u64 {
         if reg_num == 0 {
@@ -650,6 +660,13 @@ impl CPU {
         self.pc = self.csr.read_csr(MTVEC);
     }
 
+    fn mret(&mut self) {
+        let new_mie = (self.csr.read_csr(MSTATUS) & 0x80) >> 4;
+        let new_status = (self.csr.read_csr(MSTATUS) & 0xFFFF_FFFF_FFFE_0F77) | new_mie | 0x1880;
+        self.csr.write_csr(MSTATUS, new_status);
+        self.pc = self.csr.read_csr(MEPC);
+    }
+
     fn execute(&mut self, instruction: Instruction) -> u64 {
         match instruction {
             Instruction::ADDI(rs1, value) => {
@@ -723,6 +740,14 @@ impl CPU {
                 self.csr.advance();
                 self.pc.wrapping_add(4)
             }
+            Instruction::SW(rs1, rs2, imm_s) => {
+                println!("Opcode: SW");
+                let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(imm_s));
+                let stored = self.registers.read_reg(rs2) as u32;
+                self.bus.write_word(address, stored);
+                self.csr.advance();
+                self.pc.wrapping_add(4)
+            }            
             Instruction::SD(rs1, rs2, imm_s) => {
                 println!("Opcode: SD");
                 let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(imm_s));
@@ -766,6 +791,12 @@ impl CPU {
                 self.csr.advance();
                 self.pc
             }
+            Instruction::MRET => {
+                println!("Opcode: MRET");
+                self.mret();
+                self.csr.advance();
+                self.pc                
+            }
             // OR the CSR with the rs1 bitmask
             Instruction::CSRRS(rs1, rd, csr) => {
                 println!("Opcode: CSRRS");
@@ -806,6 +837,15 @@ impl CPU {
                 self.registers.write_reg(rd, result);
                 self.csr.advance();
                 self.pc.wrapping_add(4)
+            }
+            Instruction::CXBEQZ(rs1, imm) => {
+                if self.registers.read_reg(rs1) == 0 {
+                    self.csr.advance();
+                    self.pc.wrapping_add(self.sign_extend_32_64(imm))
+                } else {
+                    self.csr.advance();
+                    self.pc.wrapping_add(4)
+                }
             }
             Instruction::CXLI(rd, imm) => {
                 let uimm = self.registers.read_reg(rd) + (self.sign_extend_32_64(imm as i32) as u64);
@@ -875,6 +915,7 @@ impl CPU {
                 self.pc
             }
             Instruction::CXLDSP(rd, imm) => {
+                println!("Opcode: C.LDSP (rd: x{}, offset: {:x})", rd, imm);
                 let address = self.registers.read_reg(2).wrapping_add(self.sign_extend_32_64(imm));
                 self.registers.write_reg(rd, self.bus.read_dword(address));
                 self.csr.advance();
