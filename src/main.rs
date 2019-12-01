@@ -84,6 +84,7 @@ enum Instruction {
     CXLUI(u8, i32),
     CXLDSP(u8, i32),
     CXJR(u8),
+    CXSW(u8, u8, i32),
     CXSD(u8, u8, i32),
     CXSDSP(u8, i32),
     CXSLLI(u8, i32),
@@ -111,7 +112,7 @@ impl Instruction {
                             3 => panic!("Unimplemented RVC Op: C.LD"),
                             4 => panic!("Illegal RVC-Op: Reserved"),
                             5 => panic!("Unimplemented RVC Op: C.FSD"),
-                            6 => panic!("Unimplemented RVC Op: C.SW"),
+                            6 => Some(Instruction::CXSW(Self::get_rvc_rs1rd_compact(word), Self::get_rvc_rs2_compact(word), Self::get_rvc_imm(word))),
                             7 => Some(Instruction::CXSD(Self::get_rvc_rs1rd_compact(word), Self::get_rvc_rs2_compact(word), Self::get_rvc_imm(word))),
                             _ => None,
                         }
@@ -687,21 +688,22 @@ impl CPU {
                 let reg_rs1 = self.registers.read_reg(rs1);
                 // & (-2 as i64)
                 let new_offset = reg_rs1.wrapping_add(self.sign_extend_32_64(offset)) & ((-2 as i64) as u64);
-                println!("Opcode JALR: offset 0x{:x}, sign_extended 0x{:x} new_offset 0x{:x}", offset, self.sign_extend_32_64(offset), new_offset);
+                println!("Opcode: JALR, offset 0x{:x}, sign_extended 0x{:x} new_offset 0x{:x}", offset, self.sign_extend_32_64(offset), new_offset);
                 self.registers.write_reg(rd, self.pc + 4);
                 self.pc = new_offset;
                 self.csr.advance();
                 self.pc
             }            
             Instruction::AUIPC(register, target_address) => {
-                println!("Opcode AUIPC: adding upper immediate 0x{:x} to register", target_address);
+                println!("Opcode: AUIPC, adding upper immediate 0x{:x} to register", target_address);
                 let result = self.sign_extend_32_64(target_address);
                 self.registers.write_reg(register, result.wrapping_add(self.pc));
                 self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::LUI(rd, imm) => {
-                let uimm = self.registers.read_reg(rd).wrapping_add(self.sign_extend_32_64(imm as i32));
+                println!("Opcode: LUI");
+                let uimm = self.sign_extend_32_64(imm);
                 self.registers.write_reg(rd, uimm);
                 self.csr.advance();
                 self.pc.wrapping_add(4)
@@ -778,9 +780,10 @@ impl CPU {
                 self.pc.wrapping_add(4)
             }
             Instruction::SLLIW(rs1, rd, imm_i) => {
-                let rs1_val = (self.registers.read_reg(rs1) & 0xFFFF_FFFF) as u32;
+                let rs1_val = (self.registers.read_reg(rs1)) as u32;
                 let shamt = (imm_i & 0b111111) as u32;
                 let result = rs1_val.wrapping_shl(shamt);
+                println!("Opcode: SLLIW on rs1 x{}, rd x{} (rs1_val: {:x} shamt: {:x}, result: {:x}", rs1, rd, rs1_val, shamt, result);
                 self.registers.write_reg(rd, result as u64);
                 self.csr.advance();
                 self.pc.wrapping_add(4)
@@ -800,19 +803,23 @@ impl CPU {
             // OR the CSR with the rs1 bitmask
             Instruction::CSRRS(rs1, rd, csr) => {
                 println!("Opcode: CSRRS");
-                let src = self.csr.read_csr(csr as usize);
-                self.registers.write_reg(rd, src);
-                let dest = src | self.registers.read_reg(rs1);
-                self.csr.write_csr(csr as usize, dest);
+                if rs1 > 0 {
+                    let src = self.csr.read_csr(csr as usize);
+                    self.registers.write_reg(rd, src);
+                    let dest = src | self.registers.read_reg(rs1);
+                    self.csr.write_csr(csr as usize, dest);
+                }
                 self.csr.advance();
                 self.pc.wrapping_add(4)
             }
             Instruction::CSRRW(rs1, rd, csr) => {
                 println!("Opcode: CSRRW");
-                let src = self.csr.read_csr(csr as usize);
-                self.registers.write_reg(rd, src);
-                let dest = self.registers.read_reg(rs1);
-                self.csr.write_csr(csr as usize, dest);
+                if rd > 0 {
+                    let src = self.csr.read_csr(csr as usize);
+                    self.registers.write_reg(rd, src);
+                    let dest = self.registers.read_reg(rs1);
+                    self.csr.write_csr(csr as usize, dest);
+                }
                 self.csr.advance();
                 self.pc.wrapping_add(4)
             }
@@ -921,9 +928,19 @@ impl CPU {
                 self.csr.advance();
                 self.pc.wrapping_add(2)
             }
-            Instruction::CXSD(rs1, rs2, offset) => {
+            Instruction::CXSW(rs1, rs2, offset) => {
+                println!("Opcode: C.SW");
                 let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(offset));
-                self.registers.write_reg(rs2, address);
+                let stored = self.registers.read_reg(rs2) as u32;
+                self.bus.write_word(address, stored);
+                self.csr.advance();
+                self.pc.wrapping_add(2)                
+            }
+            Instruction::CXSD(rs1, rs2, offset) => {
+                println!("Opcode: C.SD (rs1: x{}, rs2: x{})", rs1, rs2);
+                let address = self.registers.read_reg(rs1).wrapping_add(self.sign_extend_32_64(offset));
+                let stored = self.registers.read_reg(rs2);
+                self.bus.write_dword(address, stored);
                 self.csr.advance();
                 self.pc.wrapping_add(2)
             }
@@ -1028,7 +1045,7 @@ impl MemoryBus {
             }
             _ => {
                 println!("Reading byte from unknown memory at address 0x{:x}", address);
-                0xFF
+                0xAC
             }
         }
     }
@@ -1049,8 +1066,8 @@ impl MemoryBus {
                 word
             }
             _ => {
-                //println!("Reading from unknown memory at address 0x{:x}", address);
-                0xFFFF_FFFF
+                println!("Reading from unknown memory at address 0x{:x}", address);
+                0xACAB_ACAB
             }
         }
     }
@@ -1074,8 +1091,8 @@ impl MemoryBus {
                 word
             }
             _ => {
-                //println!("Reading from unknown memory at address 0x{:x}", address);
-                0xFFFF_FFFF_FFFF_FFFF
+                panic!("Reading from unknown memory at address 0x{:x}", address);
+                0xACAB_ACAB_ACAB_ACAB
             }
         }
 
