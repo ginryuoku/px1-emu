@@ -10,6 +10,10 @@ const RAM_END: usize = RAM_START + MAX_RAM_SIZE - 1;
 const PRCI_START: usize = 0x1000_0000;
 const PRCI_END: usize = PRCI_START + 0x32 - 1;
 
+const CLINT_START: usize = 0x200_0000;
+const CLINT_SIZE: usize = 0x1_0000;
+const CLINT_END: usize = CLINT_START + CLINT_SIZE - 1;
+
 //const MAX_ROM_SIZE: usize = 1024 * 1024;
 const ROM_START: usize = 0xFFFF_FFFF_FFF0_0000;
 const ROM_END: usize = 0xFFFF_FFFF_FFFF_FFFF;
@@ -972,6 +976,52 @@ struct UART {
 
 // this exists exclusively because xv6 doesn't know that it's on a platform
 // that has no timer hardware
+struct CLINT {
+    clint: Box<[u8]>,
+}
+
+impl CLINT {
+    fn new() -> CLINT {
+        let clint = vec![0; CLINT_SIZE].into_boxed_slice();
+        CLINT {
+            clint
+        }
+    }
+    fn read_byte(&self, address: usize) -> u8 {
+        if address >= CLINT_SIZE {
+            panic!("CLINT: attempted to read beyond end of known chip memory");
+        } else {
+            self.clint[address]
+        }
+    }
+
+    fn read_dword(&self, address: usize) -> u64 {
+        if address >= CLINT_SIZE {
+            panic!("CLINT: attempted to read beyond end of known chip memory");
+        } else {
+            let word = LittleEndian::read_u64(&self.clint[(address) as usize..]);
+            println!("read_dword: address 0x{:x}, value {:x}", address, word);
+            word
+        }
+    }
+
+    fn write_byte(&mut self, address: usize, value: u8) {
+        if address >= CLINT_SIZE {
+            panic!("CLINT: attempted to write beyond end of known chip memory");
+        } else {
+            self.clint[address] = value;
+        }
+    }
+    fn write_dword(&mut self, address: usize, value: u64) {
+        if address >= CLINT_SIZE {
+            panic!("CLINT: attempted to write beyond end of known chip memory");
+        } else {
+            let slice = &mut self.clint[(address-CLINT_START) as usize..];
+            LittleEndian::write_u64(slice, value);
+        }
+    }     
+}
+
 struct PRCI {
     prci: Box<[u8]>,
 }
@@ -1006,6 +1056,7 @@ struct MemoryBus {
     boot_rom: Box<[u8]>,
     ram: Box<[u8]>,
     //uart: uart,
+    clint: CLINT,
     prci: PRCI,
 }
 
@@ -1022,6 +1073,7 @@ impl MemoryBus {
             boot_rom,
             ram,
             prci: PRCI::new(),
+            clint: CLINT::new(),
         }
     }
     fn read_byte(&self, address: u64) -> u8 {
@@ -1090,6 +1142,9 @@ impl MemoryBus {
                 println!("read_dword: address 0x{:x}, value {:x}", address, word);
                 word
             }
+            CLINT_START ..= CLINT_END => {
+                self.clint.read_dword(address - CLINT_START)
+            }
             _ => {
                 panic!("Reading from unknown memory at address 0x{:x}", address);
                 0xACAB_ACAB_ACAB_ACAB
@@ -1133,6 +1188,10 @@ impl MemoryBus {
                 println!("write_dword: address: {:x} old_value: {:x} new_value: {:x}", address, self.read_dword(address as u64), value);
                 let slice = &mut self.ram[(address-RAM_START) as usize..];
                 LittleEndian::write_u64(slice, value);
+            }
+            CLINT_START ..= CLINT_END => {
+                println!("write_dword: address: {:x} old_value: {:x} new_value: {:x}", address, self.read_byte(address as u64), value);
+                self.clint.write_dword(address - CLINT_START, value);
             }
             _ => {
                 panic!("Attempting to write to unknown memory at address 0x{:x}", address);
